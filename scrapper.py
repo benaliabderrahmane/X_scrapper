@@ -44,8 +44,11 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
     await api.pool.login_all()
 
     logging.info("Starting to scrape users")
-    for user in users_list[:30]:
+    for user in users_list[:]:
+        index = users_list.index(user) + 1
+        total_users = len(users_list)
         logging.info(f"Scraping tweets for user: {user}")
+        logging.info(f"Scraping tweets for user: {user} ({index}/{total_users}, {index/total_users*100:.2f}% complete)")
         user_info = await api.user_by_login(user)
         if user_info is None:
             logging.warning(f"User {user} not found")
@@ -71,14 +74,14 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
 
         for tweet in tweets:
             tweet_data = tweet.dict()
-            logging.info(f"Tweet data: {tweet_data}")  # Detailed logging for debugging
+            logging.debug(f"Tweet data: {tweet_data}")  # Detailed logging for debugging
             
             # Skip tweets from users not in the users_list
             if tweet_data['user']['username'] not in users_list:
                 logging.info(f"Skipping tweet from user: {tweet_data['user']['username']}")
                 continue
 
-            mutuality = 'Mutual' if tweet_data['user']['id'] in followers_ids and user_id in following_ids else 'Not Mutual'
+            mutuality = 'Mutual' if tweet_data['user']['username'] in followers_ids and tweet_data['user']['id'] in following_ids else 'Not Mutual'
 
             is_retweet = 'retweetedTweet' in tweet_data and tweet_data['retweetedTweet'] is not None
             is_quote = 'quotedTweet' in tweet_data and tweet_data['quotedTweet'] is not None
@@ -112,7 +115,7 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
             logging.info(f"Tweet ID: {tweet_data['id']} - is_retweet: {is_retweet}, is_quote: {is_quote}, is_reply: {is_reply}")  # Log tweet types
 
             new_row = pd.DataFrame([{
-                'tweet_id': tweet_data['id'],
+                'tweet_id': str(tweet_data['id']),
                 'user': tweet_data['user']['username'],
                 'created_at': tweet_data['date'].strftime("%Y/%m/%d %H:%M:%S"),
                 'post_text': tweet_data['rawContent'],
@@ -126,10 +129,10 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
                 'is_retweet': is_retweet,
                 'is_quote': is_quote,
                 'is_reply': is_reply,
-                'reply_to_id': reply_to_id,
+                'reply_to_id': str(reply_to_id),
                 'reply_to_user': reply_to_user,
                 'reply_to_text': reply_to_text,
-                'original_tweet_id': original_tweet_id,
+                'original_tweet_id': str(original_tweet_id),
                 'original_tweet_user': original_tweet_user,
                 'original_tweet_text': original_tweet_text,
                 'is_mutual_followership': mutuality
@@ -141,14 +144,14 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
         for tweet in retweets_and_replies: 
                 
             tweet_data = tweet.dict()
-            logging.info(f"retweets_and_replies data: {tweet_data}")  # Detailed logging for debugging
+            logging.debug(f"retweets_and_replies data: {tweet_data}")  # Detailed logging for debugging
 
             # Skip tweets from users not in the users_list
             if tweet_data['user']['username'] not in users_list:
                 logging.info(f"Skipping tweet from user: {tweet_data['user']['username']}")
                 continue
             
-            mutuality = 'Mutual' if tweet_data['user']['id'] in followers_ids and user_id in following_ids else 'Not Mutual'
+            
 
             is_retweet = 'retweetedTweet' in tweet_data and tweet_data['retweetedTweet'] is not None
             is_quote = 'quotedTweet' in tweet_data and tweet_data['quotedTweet'] is not None
@@ -179,10 +182,15 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
                 else:
                     original_tweet_text = None  # or fetch the original tweet text if necessary
 
-            logging.info(f"Tweet ID: {tweet_data['id']} - is_retweet: {is_retweet}, is_quote: {is_quote}, is_reply: {is_reply}")  # Log tweet types
+            followers_user = {follower.dict()['username'] for follower in followers}
+            following_user = {following.dict()['username'] for following in followings}
+            
+            mutuality = 'Mutual' if reply_to_user in followers_user and reply_to_user in following_user else 'Not Mutual'
+            logging.info(f"Mutuality: {mutuality}")
+
 
             new_row = pd.DataFrame([{
-                'tweet_id': tweet_data['id'],
+                'tweet_id': str(tweet_data['id']),
                 'user': tweet_data['user']['username'],
                 'created_at': tweet_data['date'].strftime("%Y/%m/%d %H:%M:%S"),
                 'post_text': tweet_data['rawContent'],
@@ -196,10 +204,10 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
                 'is_retweet': is_retweet,
                 'is_quote': is_quote,
                 'is_reply': is_reply,
-                'reply_to_id': reply_to_id,
+                'reply_to_id':str(reply_to_id),
                 'reply_to_user': reply_to_user,
                 'reply_to_text': reply_to_text,
-                'original_tweet_id': original_tweet_id,
+                'original_tweet_id': str(original_tweet_id),
                 'original_tweet_user': original_tweet_user,
                 'original_tweet_text': original_tweet_text,
                 'is_mutual_followership': mutuality
