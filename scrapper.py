@@ -6,10 +6,25 @@ import asyncio
 import logging
 import time
 from twscrape import API, gather
+import random
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+async def random_sleep():
+    await asyncio.sleep(random.uniform(1, 3)) 
+
+async def retry_with_backoff(api_call, retries=3):
+    delay = 1
+    for attempt in range(retries):
+        try:
+            return await api_call()
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff
+            else:
+                raise e
 async def scrap_tweets(credentials_file, users_path, text_limit):
     logging.info("Starting the scraping process")
 
@@ -39,15 +54,17 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
     logging.info("Adding accounts")
     for credential in credentials:
         await add_account_if_not_exists(credential)
+        await random_sleep()  # Add a random delay after adding each account
 
     logging.info("Logging in all accounts")
     await api.pool.login_all()
 
     logging.info("Starting to scrape users")
+    processed_tweet_ids = set()  # Track processed tweet IDs
+
     for user in users_list[:]:
         index = users_list.index(user) + 1
         total_users = len(users_list)
-        logging.info(f"Scraping tweets for user: {user}")
         logging.info(f"Scraping tweets for user: {user} ({index}/{total_users}, {index/total_users*100:.2f}% complete)")
         user_info = await api.user_by_login(user)
         if user_info is None:
@@ -75,11 +92,18 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
         for tweet in tweets:
             tweet_data = tweet.dict()
             logging.debug(f"Tweet data: {tweet_data}")  # Detailed logging for debugging
-            
+
             # Skip tweets from users not in the users_list
             if tweet_data['user']['username'] not in users_list:
                 logging.info(f"Skipping tweet from user: {tweet_data['user']['username']}")
                 continue
+
+            tweet_id = tweet_data['id']
+            if tweet_id in processed_tweet_ids:
+                logging.info(f"Duplicate tweet ID: {tweet_id}, skipping.")
+                continue
+
+            processed_tweet_ids.add(tweet_id)  # Mark this tweet ID as processed
 
             mutuality = 'Mutual' if tweet_data['user']['username'] in followers_ids and tweet_data['user']['id'] in following_ids else 'Not Mutual'
 
@@ -112,10 +136,10 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
                 else:
                     original_tweet_text = None  # or fetch the original tweet text if necessary
 
-            logging.info(f"Tweet ID: {tweet_data['id']} - is_retweet: {is_retweet}, is_quote: {is_quote}, is_reply: {is_reply}")  # Log tweet types
+            logging.info(f"Tweet ID: {tweet_id} - is_retweet: {is_retweet}, is_quote: {is_quote}, is_reply: {is_reply}")  # Log tweet types
 
             new_row = pd.DataFrame([{
-                'tweet_id': str(tweet_data['id']),
+                'tweet_id': str(tweet_id),
                 'user': tweet_data['user']['username'],
                 'created_at': tweet_data['date'].strftime("%Y/%m/%d %H:%M:%S"),
                 'post_text': tweet_data['rawContent'],
@@ -139,10 +163,9 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
             }])
 
             df = pd.concat([df, new_row], ignore_index=True)
-            logging.info(f"Processed tweet ID: {tweet_data['id']} for user: {user}")
+            logging.info(f"Processed tweet ID: {tweet_id} for user: {user}")
 
         for tweet in retweets_and_replies: 
-                
             tweet_data = tweet.dict()
             logging.debug(f"retweets_and_replies data: {tweet_data}")  # Detailed logging for debugging
 
@@ -150,8 +173,13 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
             if tweet_data['user']['username'] not in users_list:
                 logging.info(f"Skipping tweet from user: {tweet_data['user']['username']}")
                 continue
-            
-            
+
+            tweet_id = tweet_data['id']
+            if tweet_id in processed_tweet_ids:
+                logging.info(f"Duplicate tweet ID: {tweet_id}, skipping.")
+                continue
+
+            processed_tweet_ids.add(tweet_id)  # Mark this tweet ID as processed
 
             is_retweet = 'retweetedTweet' in tweet_data and tweet_data['retweetedTweet'] is not None
             is_quote = 'quotedTweet' in tweet_data and tweet_data['quotedTweet'] is not None
@@ -184,13 +212,12 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
 
             followers_user = {follower.dict()['username'] for follower in followers}
             following_user = {following.dict()['username'] for following in followings}
-            
+
             mutuality = 'Mutual' if reply_to_user in followers_user and reply_to_user in following_user else 'Not Mutual'
             logging.info(f"Mutuality: {mutuality}")
 
-
             new_row = pd.DataFrame([{
-                'tweet_id': str(tweet_data['id']),
+                'tweet_id': str(tweet_id),
                 'user': tweet_data['user']['username'],
                 'created_at': tweet_data['date'].strftime("%Y/%m/%d %H:%M:%S"),
                 'post_text': tweet_data['rawContent'],
@@ -204,7 +231,7 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
                 'is_retweet': is_retweet,
                 'is_quote': is_quote,
                 'is_reply': is_reply,
-                'reply_to_id':str(reply_to_id),
+                'reply_to_id': str(reply_to_id),
                 'reply_to_user': reply_to_user,
                 'reply_to_text': reply_to_text,
                 'original_tweet_id': str(original_tweet_id),
@@ -214,7 +241,9 @@ async def scrap_tweets(credentials_file, users_path, text_limit):
             }])
 
             df = pd.concat([df, new_row], ignore_index=True)
-            logging.info(f"Processed tweet ID: {tweet_data['id']} for user: {user}")
+            logging.info(f"Processed tweet ID: {tweet_id} for user: {user}")
+
+        await random_sleep()  # Add a random delay after processing each user
 
     logging.info("Scraping process completed")
     return df
